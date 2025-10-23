@@ -11,7 +11,7 @@ export class LearningPathGenerator extends BaseAgent {
   constructor() {
     super({
       name: 'LearningPathGenerator',
-      model: 'gpt-4o-mini',
+      model: 'gpt-5',
       temperature: 0.7,
       maxTokens: 3000,
       systemPrompt: 'You are an expert curriculum designer who creates comprehensive learning paths.',

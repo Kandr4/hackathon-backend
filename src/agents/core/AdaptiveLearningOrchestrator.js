@@ -8,9 +8,11 @@ import ConversationAnalyzer from '../individual/ConversationAnalyzer.js';
 import TeacherModel from '../individual/TeacherModel.js';
 import ResponseEvaluator from '../individual/ResponseEvaluator.js';
 import SyntheticEvaluator from '../individual/SyntheticEvaluator.js';
+import VideoGenerator from '../individual/VideoGenerator.js';
+import FlashcardGenerator from '../individual/FlashcardGenerator.js';
 
 /**
- * Orchestrator for the 6-model adaptive learning system
+ * Orchestrator for the 8-model multimodal adaptive learning system
  * Coordinates all agents to provide personalized learning experiences
  */
 export class AdaptiveLearningOrchestrator {
@@ -35,7 +37,7 @@ export class AdaptiveLearningOrchestrator {
     // Model 3: Conversation Analyzer
     const conversationAnalyzer = new ConversationAnalyzer();
     
-    // Model 4: Teacher Model
+    // Model 4: Teacher Model (Text-based)
     const teacherModel = new TeacherModel();
     
     // Model 5: Response Evaluator
@@ -43,6 +45,12 @@ export class AdaptiveLearningOrchestrator {
     
     // Model 6: Synthetic Evaluator
     const syntheticEvaluator = new SyntheticEvaluator();
+    
+    // Model 7: Video Generator (Visual learning)
+    const videoGenerator = new VideoGenerator();
+    
+    // Model 8: Flashcard Generator (Spaced repetition)
+    const flashcardGenerator = new FlashcardGenerator();
     
     // Legacy agents (still useful)
     const lessonGenerator = new LessonGenerator();
@@ -55,11 +63,13 @@ export class AdaptiveLearningOrchestrator {
     this.communication.registerAgent(teacherModel);
     this.communication.registerAgent(responseEvaluator);
     this.communication.registerAgent(syntheticEvaluator);
+    this.communication.registerAgent(videoGenerator);
+    this.communication.registerAgent(flashcardGenerator);
     this.communication.registerAgent(lessonGenerator);
     this.communication.registerAgent(lessonEvaluator);
     this.communication.registerAgent(changeDetector);
     
-    console.log('✅ All 6 models initialized and registered');
+    console.log('✅ All 8 models initialized and registered (multimodal learning enabled)');
   }
 
   /**

@@ -1,23 +1,40 @@
 import BaseAgent from '../core/BaseAgent.js';
 import config from '../config/index.js';
+import pool from '../../config/database.js';
 
 /**
- * Model 2: System Prompt Creator
+ * Model 2: System Prompt Creator & Preference Manager
  * Generates and updates system prompts for Model 4 and Model 5
- * Based on user preferences, personality, and feedback from Model 3
+ * Manages global user preferences with update/removal capabilities
+ * Uses GPT-4o for intelligent preference detection and management
  */
 export class SystemPromptGenerator extends BaseAgent {
   constructor() {
     super({
-      ...config.agents.systemPromptGenerator,
-      systemPrompt: 'You are an expert at creating personalized system prompts for educational AI tutors based on user preferences and personality.',
+      name: 'SystemPromptGenerator',
+      model: 'gpt-5-thinking', // Using GPT-5 (gpt5 equivalent) for preference analysis
+      reasoning: {
+        "effort": "high"
+      },
+      temperature: 0.3,
+      maxTokens: 2000,
+      systemPrompt: `You are an expert preference analyzer and system prompt creator for educational AI.
+
+Your responsibilities:
+1. Analyze user messages to detect preference changes
+2. Update global preferences (format, style, complexity)
+3. Remove outdated/conflicting preferences
+4. Generate personalized system prompts for teaching models
+
+Key capabilities:
+- Detect explicit preferences: "I hate text, use flashcards", "I prefer videos"
+- Detect implicit preferences from learning patterns
+- Remove outdated preferences when user changes mind
+- Maintain preference history and reasoning`,
     });
     
-    /** @type {Map<string, import('../types/index.js').SystemPrompt>} */
-    this.systemPrompts = new Map();
-    this.currentVersion = 1;
-    /** @type {Map<string, number>} */
-    this.userPromptVersions = new Map(); // Track versions per user
+    /** @type {Map<string, any>} */
+    this.userPreferences = new Map(); // Cache user preferences
   }
 
   /**
@@ -51,14 +68,316 @@ export class SystemPromptGenerator extends BaseAgent {
         return await this.generateSystemPrompt(data);
       case 'update_system_prompt':
         return await this.updateSystemPrompt(data);
-      case 'get_system_prompt':
-        return await this.getSystemPrompt(data);
-      case 'generate_personalized_prompt':
-        return await this.generatePersonalizedPrompt(data);
-      case 'adjust_from_feedback':
-        return await this.adjustFromFeedback(data);
+      case 'analyze_preferences':
+        return await this.analyzeAndUpdatePreferences(data);
       default:
         return this.createResponse(null, 'Unsupported action');
+    }
+  }
+
+  /**
+   * Analyze user message and update global preferences
+   * Detects new preferences, updates existing ones, removes outdated ones
+   * @private
+   */
+  async analyzeAndUpdatePreferences(data) {
+    const { userId, userMessage, userPreferences = {}, conversationHistory = [] } = data;
+
+    console.log(`🔍 [Model 2] Analyzing preferences for user ${userId}...`);
+
+    // Get current stored preferences
+    let currentPrefs = await this.getUserPreferences(userId);
+
+    const analysisPrompt = `You are analyzing a user's message to update their learning preferences.
+
+CURRENT USER PREFERENCES:
+${JSON.stringify(currentPrefs, null, 2)}
+
+USER'S LATEST MESSAGE:
+"${userMessage}"
+
+RECENT CONVERSATION HISTORY:
+${conversationHistory.slice(-3).map(msg => `${msg.is_user ? 'Student' : 'Teacher'}: ${msg.message}`).join('\n')}
+
+TASK:
+1. Detect if the user is expressing a NEW preference or CHANGING an existing one
+2. Identify which preferences to UPDATE or REMOVE
+3. Determine the preferred output format (text/video/flashcards)
+
+PREFERENCE DETECTION RULES:
+
+**Explicit Format Preferences** (HIGH PRIORITY - SAVE GLOBALLY):
+- "I hate text" / "too much text" → Set formatPreference to "flashcards" or "video"
+- "use flashcards" / "give me flashcards" → formatPreference = "flashcards"
+- "I prefer videos" / "make a video" → formatPreference = "video"
+- "explain in text" / "write it out" → formatPreference = "text"
+- "no more videos" → Remove video preference
+
+**Changing Preferences** (REMOVE OLD, SET NEW):
+- "No, I like X better" → removePreferences: [old format], set new formatPreference
+- "Actually, I prefer Y" → Remove conflicting preferences, set new one
+- "Change to Z" → Update to new preference
+
+**Additional Preference Types**:
+- "always give examples" → wants_examples = true
+- "I don't need examples" → wants_examples = false
+- "use analogies" → wants_analogies = true
+- "I learn better with exercises" → wants_exercises = true
+
+**Implicit Preferences**:
+- Asking "summarize" / "key points" → Suggest flashcards
+- Asking "show me" / "demonstrate" → Suggest video
+- Asking "explain in detail" → Suggest text
+
+**Learning Style Detection**:
+- Visual language ("show", "see", "picture") → learning_style = "visual"
+- "I like to hear" / "read aloud" → learning_style = "auditory"  
+- "I prefer to read" → learning_style = "reading_writing"
+- "hands-on" → learning_style = "kinesthetic"
+
+RESPONSE FORMAT (JSON only):
+{
+  "preferencesChanged": boolean,
+  "updates": {
+    "formatPreference": "text|video|flashcards|null",
+    "explanation_style": "concise|detailed|balanced|null",
+    "learningStyle": "visual|auditory|reading_writing|kinesthetic|mixed|null",
+    "pace": "slow|normal|fast|null",
+    "complexity": "beginner|intermediate|advanced|null",
+    "wants_examples": boolean or null,
+    "wants_analogies": boolean or null,
+    "wants_exercises": boolean or null,
+    "removePreferences": ["list", "of", "outdated", "preference", "field", "names"]
+  },
+  "reasoning": "Why these changes were made",
+  "preferredFormat": "text|video|flashcards",
+  "confidence": number (0-100),
+  "indicators": ["specific evidence from message"]
+}
+
+If NO preference changes detected, set preferencesChanged to false and return current format.`;
+
+    try {
+      const response = await this.llm.invoke(analysisPrompt);
+      const content = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+      const analysis = this.extractJSON(content);
+
+      console.log(`📊 [Model 2] Preference analysis:`, {
+        changed: analysis.preferencesChanged,
+        format: analysis.preferredFormat,
+        confidence: analysis.confidence
+      });
+
+      // Update preferences if changed
+      if (analysis.preferencesChanged) {
+        currentPrefs = await this.updateUserPreferences(userId, analysis.updates, currentPrefs);
+        console.log(`✅ [Model 2] Preferences updated for user ${userId}`);
+      }
+
+      return this.createResponse({
+        formatAnalysis: {
+          preferredFormat: analysis.preferredFormat || currentPrefs.formatPreference || 'text',
+          confidence: analysis.confidence || 50,
+          reasoning: analysis.reasoning,
+          indicators: analysis.indicators || [],
+          preferencesUpdated: analysis.preferencesChanged,
+          currentPreferences: currentPrefs
+        }
+      });
+
+    } catch (error) {
+      console.error('Error analyzing preferences:', error);
+      
+      // Fallback to current preferences
+      return this.createResponse({
+        formatAnalysis: {
+          preferredFormat: currentPrefs.formatPreference || 'text',
+          confidence: 50,
+          reasoning: 'Using stored preferences (analysis failed)',
+          indicators: [],
+          preferencesUpdated: false,
+          currentPreferences: currentPrefs
+        }
+      });
+    }
+  }
+
+  /**
+   * Get user preferences from database
+   * @private
+   */
+  async getUserPreferences(userId) {
+    try {
+      // Check cache first
+      if (this.userPreferences.has(userId)) {
+        return this.userPreferences.get(userId);
+      }
+
+      const result = await pool.query(
+        `SELECT learning_style, pace, preferred_difficulty, explanation_style, 
+                wants_examples, wants_analogies, wants_exercises, custom_preferences 
+         FROM user_preferences WHERE user_id = $1`,
+        [userId]
+      );
+
+      if (result.rows.length > 0) {
+        const row = result.rows[0];
+        const prefs = {
+          learningStyle: row.learning_style,
+          pace: row.pace,
+          complexity: row.preferred_difficulty,
+          formatPreference: row.explanation_style,
+          wants_examples: row.wants_examples,
+          wants_analogies: row.wants_analogies,
+          wants_exercises: row.wants_exercises,
+          custom: row.custom_preferences || {}
+        };
+        
+        // Cache it
+        this.userPreferences.set(userId, prefs);
+        return prefs;
+      }
+
+      // Default preferences - create entry if doesn't exist
+      await pool.query(
+        `INSERT INTO user_preferences (user_id, learning_style, pace, preferred_difficulty, explanation_style, wants_examples, wants_analogies, wants_exercises)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [userId, 'mixed', 'normal', 'intermediate', 'balanced', true, true, true]
+      );
+
+      const defaultPrefs = {
+        learningStyle: 'mixed',
+        pace: 'normal',
+        complexity: 'intermediate',
+        formatPreference: 'balanced',
+        wants_examples: true,
+        wants_analogies: true,
+        wants_exercises: true,
+        custom: {}
+      };
+
+      this.userPreferences.set(userId, defaultPrefs);
+      return defaultPrefs;
+    } catch (error) {
+      console.error('Error getting user preferences:', error);
+      return {
+        learningStyle: 'mixed',
+        pace: 'normal',
+        complexity: 'intermediate',
+        formatPreference: 'balanced',
+        wants_examples: true,
+        wants_analogies: true,
+        wants_exercises: true,
+        custom: {}
+      };
+    }
+  }
+
+  /**
+   * Update user preferences in database
+   * @private
+   */
+  async updateUserPreferences(userId, updates, currentPrefs) {
+    try {
+      const newPrefs = { ...currentPrefs };
+
+      // Apply updates
+      if (updates.formatPreference !== null && updates.formatPreference !== undefined) {
+        newPrefs.formatPreference = updates.formatPreference;
+      }
+      if (updates.learningStyle !== null && updates.learningStyle !== undefined) {
+        newPrefs.learningStyle = updates.learningStyle;
+      }
+      if (updates.pace !== null && updates.pace !== undefined) {
+        newPrefs.pace = updates.pace;
+      }
+      if (updates.complexity !== null && updates.complexity !== undefined) {
+        newPrefs.complexity = updates.complexity;
+      }
+      if (updates.wants_examples !== null && updates.wants_examples !== undefined) {
+        newPrefs.wants_examples = updates.wants_examples;
+      }
+      if (updates.wants_analogies !== null && updates.wants_analogies !== undefined) {
+        newPrefs.wants_analogies = updates.wants_analogies;
+      }
+      if (updates.wants_exercises !== null && updates.wants_exercises !== undefined) {
+        newPrefs.wants_exercises = updates.wants_exercises;
+      }
+      if (updates.explanation_style !== null && updates.explanation_style !== undefined) {
+        newPrefs.formatPreference = updates.explanation_style; // Map explanation_style to formatPreference
+      }
+
+      // Remove outdated preferences if specified
+      if (updates.removePreferences && Array.isArray(updates.removePreferences)) {
+        updates.removePreferences.forEach(pref => {
+          if (pref === 'formatPreference' || pref === 'explanation_style') {
+            newPrefs.formatPreference = 'balanced';
+          }
+          if (pref === 'learningStyle') newPrefs.learningStyle = 'mixed';
+          if (pref === 'pace') newPrefs.pace = 'normal';
+          if (pref === 'complexity') newPrefs.complexity = 'intermediate';
+          if (pref === 'wants_examples') newPrefs.wants_examples = true;
+          if (pref === 'wants_analogies') newPrefs.wants_analogies = true;
+          if (pref === 'wants_exercises') newPrefs.wants_exercises = true;
+        });
+      }
+
+      // Update database - use user_preferences table
+      await pool.query(
+        `UPDATE user_preferences 
+         SET learning_style = $1, 
+             pace = $2, 
+             preferred_difficulty = $3, 
+             explanation_style = $4,
+             wants_examples = $5,
+             wants_analogies = $6,
+             wants_exercises = $7,
+             preference_changes_count = preference_changes_count + 1
+         WHERE user_id = $8`,
+        [
+          newPrefs.learningStyle, 
+          newPrefs.pace, 
+          newPrefs.complexity, 
+          newPrefs.formatPreference,
+          newPrefs.wants_examples,
+          newPrefs.wants_analogies,
+          newPrefs.wants_exercises,
+          userId
+        ]
+      );
+
+      // Update cache
+      this.userPreferences.set(userId, newPrefs);
+
+      console.log(`💾 [Model 2] Saved preferences to user_preferences table:`, newPrefs);
+
+      return newPrefs;
+    } catch (error) {
+      console.error('Error updating user preferences:', error);
+      return currentPrefs;
+    }
+  }
+
+  /**
+   * Extract JSON from text
+   * @private
+   */
+  extractJSON(text) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      const jsonMatch = text.match(/```(?:json)?\s*(\{[\s\S]*\})\s*```/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[1]);
+      }
+      
+      const objectMatch = text.match(/\{[\s\S]*\}/);
+      if (objectMatch) {
+        return JSON.parse(objectMatch[0]);
+      }
+      
+      throw new Error('No valid JSON found in response');
     }
   }
 
@@ -67,325 +386,115 @@ export class SystemPromptGenerator extends BaseAgent {
    * @private
    */
   async handleNotification(message) {
-    const { type, data } = message.content;
+    const { event, data } = message.content;
 
-    switch (type) {
-      case 'learning_pattern_change':
-        return await this.adaptToLearningPattern(data);
-      case 'user_feedback':
+    switch (event) {
+      case 'feedback_received':
         return await this.incorporateFeedback(data);
+      case 'learning_pattern_detected':
+        return await this.adaptToLearningPattern(data);
       default:
-        return this.createResponse(null, 'Unsupported notification type');
+        return this.createResponse({ acknowledged: true });
     }
   }
 
   /**
-   * Generate a new system prompt
+   * Generate initial system prompt
    * @private
    */
   async generateSystemPrompt(data) {
-    const { topic, userLevel, learningStyle } = data;
+    const { userId, userPreferences = {}, lessonContext = {} } = data;
 
-    const promptTemplate = `Create an effective system prompt for an educational AI tutor specialized in "${topic}".
+    // Get latest preferences from database
+    const currentPrefs = await this.getUserPreferences(userId);
 
-Context:
-- Topic: ${topic}
-- User Level: ${userLevel}
+    const lessonTitle = lessonContext?.title || 'General Learning Topic';
+    const lessonTopic = lessonContext?.topic || 'General';
+    const learningStyle = currentPrefs.learningStyle || userPreferences.learningStyle || 'adaptive';
+    const pace = currentPrefs.pace || userPreferences.pace || 'medium';
+    const complexity = currentPrefs.complexity || userPreferences.complexity || 'intermediate';
+    const formatPref = currentPrefs.formatPreference || userPreferences.formatPreference || 'text';
+
+    const systemPrompt = `You are an AI tutor helping a student learn about "${lessonTitle}" (Topic: ${lessonTopic}).
+
+STUDENT PROFILE:
 - Learning Style: ${learningStyle}
+- Preferred Pace: ${pace}
+- Complexity Level: ${complexity}
+- Preferred Format: ${formatPref}
 
-Create a system prompt that:
-1. Defines the AI's role as a specialized tutor
-2. Sets the appropriate tone and communication style
-3. Includes specific instructions for adapting to the user's level
-4. Provides guidelines for generating quality educational content
-5. Includes criteria for evaluating user progress
+YOUR ROLE:
+- Provide clear, personalized explanations
+- Adapt to the student's learning pace
+- Use examples relevant to their level
+- Encourage questions and exploration
+- ${formatPref === 'flashcards' ? 'Focus on bite-sized, memorizable facts' : ''}
+- ${formatPref === 'video' ? 'Describe visual demonstrations clearly' : ''}
+- ${formatPref === 'text' ? 'Provide detailed written explanations' : ''}
 
-The prompt should be clear, concise, and action-oriented. Output only the system prompt text.`;
+TEACHING APPROACH:
+- ${pace === 'fast' ? 'Be concise and efficient' : pace === 'slow' ? 'Be patient and thorough' : 'Balance detail with clarity'}
+- ${complexity === 'basic' ? 'Use simple language and basic concepts' : complexity === 'advanced' ? 'Include technical details and advanced concepts' : 'Provide intermediate-level explanations'}
+- Always check for understanding
+- Build on previous knowledge
 
-    try {
-      const response = await this.llm.invoke(promptTemplate);
-      const promptContent = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
+Remember: Adapt your teaching style based on student responses and feedback.`;
 
-      /** @type {import('../types/index.js').SystemPrompt} */
-      const systemPrompt = {
-        id: `prompt_${topic.replace(/\s+/g, '_')}_${Date.now()}`,
-        content: promptContent,
-        version: this.currentVersion,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
+    console.log(`✅ [Model 2] Generated system prompt for user ${userId}`);
 
-      this.systemPrompts.set(systemPrompt.id, systemPrompt);
-      this.currentVersion++;
-
-      return this.createResponse({
-        systemPrompt,
-        message: 'System prompt generated successfully',
-      });
-    } catch (error) {
-      return this.createResponse(null, `Error generating system prompt: ${error}`);
-    }
+    return this.createResponse({
+      systemPrompt,
+      version: 1,
+      preferences: currentPrefs
+    });
   }
 
   /**
-   * Update an existing system prompt
+   * Update system prompt based on feedback
    * @private
    */
   async updateSystemPrompt(data) {
-    const { promptId, feedback, learningPattern } = data;
-    
-    const existingPrompt = this.systemPrompts.get(promptId);
-    if (!existingPrompt) {
-      return this.createResponse(null, 'System prompt not found');
-    }
+    const { userId, feedback, previousPrompt } = data;
 
-    const updateTemplate = `Current system prompt: ${existingPrompt.content}
+    console.log(`🔄 [Model 2] Updating system prompt based on feedback`);
 
-Feedback received: ${feedback}
-Learning pattern detected: ${JSON.stringify(learningPattern)}
+    // Get current preferences
+    const currentPrefs = await this.getUserPreferences(userId);
 
-Update the system prompt based on:
-1. The feedback provided
-2. The identified learning patterns
-3. The user's specific needs
-4. Best pedagogical practices
-
-Maintain the original structure but improve the prompt's effectiveness. Output only the updated system prompt text.`;
-
-    try {
-      const response = await this.llm.invoke(updateTemplate);
-      const updatedContent = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
-
-      /** @type {import('../types/index.js').SystemPrompt} */
-      const updatedPrompt = {
-        ...existingPrompt,
-        content: updatedContent,
-        version: existingPrompt.version + 1,
-        updatedAt: new Date(),
-      };
-
-      this.systemPrompts.set(promptId, updatedPrompt);
-
-      return this.createResponse({
-        systemPrompt: updatedPrompt,
-        message: 'System prompt updated successfully',
-      });
-    } catch (error) {
-      return this.createResponse(null, `Error updating system prompt: ${error}`);
-    }
+    // Regenerate with updated preferences
+    return await this.generateSystemPrompt({ userId, userPreferences: currentPrefs });
   }
 
   /**
-   * Get a system prompt by ID
+   * Get current system prompt
    * @private
    */
   async getSystemPrompt(data) {
-    const { promptId } = data;
-    const prompt = this.systemPrompts.get(promptId);
+    const { userId } = data;
     
-    if (!prompt) {
-      return this.createResponse(null, 'System prompt not found');
-    }
-
-    return this.createResponse({ systemPrompt: prompt });
+    const currentPrefs = await this.getUserPreferences(userId);
+    
+    return this.createResponse({
+      preferences: currentPrefs
+    });
   }
 
   /**
-   * Adapt to learning pattern changes
+   * Adapt to detected learning patterns
    * @private
    */
   async adaptToLearningPattern(data) {
-    // Implementation for adapting to learning pattern changes
-    return this.createResponse({ message: 'Learning pattern adaptation noted' });
+    console.log(`📈 [Model 2] Adapting to learning pattern`);
+    return this.createResponse({ acknowledged: true });
   }
 
   /**
-   * Incorporate user feedback
+   * Incorporate feedback
    * @private
    */
   async incorporateFeedback(data) {
-    // Implementation for incorporating user feedback
-    return this.createResponse({ message: 'User feedback incorporated' });
-  }
-
-  /**
-   * Generate personalized system prompt based on user preferences and personality
-   * @private
-   */
-  async generatePersonalizedPrompt(data) {
-    const { 
-      userId, 
-      lessonTopic, 
-      userPreferences = {}, 
-      targetModel = 'teacher' // 'teacher' for Model 4, 'evaluator' for Model 5
-    } = data;
-
-    const promptForTeacher = `Create a highly personalized system prompt for an AI tutor teaching "${lessonTopic}".
-
-USER PREFERENCES AND PERSONALITY:
-${JSON.stringify(userPreferences, null, 2)}
-
-TEACHING APPROACH REQUIREMENTS:
-Based on the user's preferences, create a system prompt that:
-1. Matches their preferred learning style: ${userPreferences.learning_style || 'mixed'}
-2. Uses their preferred explanation style: ${userPreferences.explanation_style || 'balanced'}
-3. Adjusts pace to: ${userPreferences.pace || 'normal'}
-4. ${userPreferences.wants_examples ? 'ALWAYS includes practical examples' : 'Uses examples when relevant'}
-5. ${userPreferences.wants_analogies ? 'Uses analogies and metaphors frequently' : 'Uses analogies occasionally'}
-6. ${userPreferences.wants_exercises ? 'Includes practice exercises' : 'Focuses on explanations'}
-
-PERSONALITY ADAPTATION:
-- Curiosity level: ${userPreferences.curiosity_level || 5}/10 - ${userPreferences.curiosity_level > 7 ? 'Encourage deep exploration' : userPreferences.curiosity_level > 4 ? 'Balance depth and breadth' : 'Focus on essentials'}
-- Patience level: ${userPreferences.patience_level || 5}/10 - ${userPreferences.patience_level > 7 ? 'Can use more complex explanations' : 'Keep it simple and clear'}
-- Detail orientation: ${userPreferences.detail_orientation || 5}/10 - ${userPreferences.detail_orientation > 7 ? 'Provide comprehensive details' : 'Focus on key points'}
-
-The system prompt should instruct the AI to:
-- Act as a personalized tutor specifically for this user
-- Adapt communication style to match preferences
-- Be encouraging and supportive
-- Check for understanding regularly
-- Adjust if user seems confused
-
-Output ONLY the system prompt text, no JSON or extra formatting.`;
-
-    const promptForEvaluator = `Create a system prompt for an AI evaluator that will assess teaching responses for "${lessonTopic}".
-
-USER PREFERENCES (for context):
-${JSON.stringify(userPreferences, null, 2)}
-
-EVALUATION APPROACH:
-The evaluator should:
-1. Create rubrics that align with the user's learning preferences
-2. Evaluate if explanations match the user's preferred style
-3. Check if pace and depth are appropriate
-4. Assess if examples/analogies are used as preferred
-5. Verify teaching quality and accuracy
-
-The system prompt should instruct the evaluator to:
-- Generate appropriate rubrics for each response
-- Score responses objectively (0-100)
-- Provide constructive feedback
-- Consider user preferences in evaluation
-- Maintain high quality standards (minimum 70 to pass)
-
-Output ONLY the system prompt text, no JSON or extra formatting.`;
-
-    const selectedPrompt = targetModel === 'teacher' ? promptForTeacher : promptForEvaluator;
-
-    try {
-      const response = await this.llm.invoke(selectedPrompt);
-      const promptContent = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
-
-      // Get or create user version number
-      const userKey = `${userId}_${targetModel}`;
-      const currentVersion = this.userPromptVersions.get(userKey) || 0;
-      const newVersion = currentVersion + 1;
-      this.userPromptVersions.set(userKey, newVersion);
-
-      /** @type {import('../types/index.js').SystemPrompt} */
-      const systemPrompt = {
-        id: `prompt_${userId}_${targetModel}_${Date.now()}`,
-        content: promptContent,
-        version: newVersion,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        metadata: {
-          userId,
-          targetModel,
-          userPreferences,
-          lessonTopic,
-        },
-      };
-
-      this.systemPrompts.set(systemPrompt.id, systemPrompt);
-
-      return this.createResponse({
-        systemPrompt,
-        message: `Personalized ${targetModel} prompt generated (v${newVersion})`,
-      });
-    } catch (error) {
-      return this.createResponse(null, `Error generating personalized prompt: ${error}`);
-    }
-  }
-
-  /**
-   * Adjust system prompt based on feedback from Model 3
-   * @private
-   */
-  async adjustFromFeedback(data) {
-    const { 
-      currentPromptId, 
-      userId, 
-      feedback, 
-      analysis, 
-      targetModel = 'teacher' 
-    } = data;
-
-    const existingPrompt = this.systemPrompts.get(currentPromptId);
-    if (!existingPrompt) {
-      return this.createResponse(null, 'Current system prompt not found');
-    }
-
-    const adjustmentPrompt = `You need to adjust an AI tutor's system prompt based on conversation analysis feedback.
-
-CURRENT SYSTEM PROMPT:
-${existingPrompt.content}
-
-ANALYSIS FEEDBACK:
-${JSON.stringify(analysis, null, 2)}
-
-SPECIFIC FEEDBACK:
-${feedback}
-
-ADJUSTMENTS NEEDED:
-${analysis.isStuck ? `- User is stuck (${analysis.stuckSeverity} severity): ${analysis.stuckReason}` : ''}
-${analysis.hasNewPreference ? `- New preferences detected: ${JSON.stringify(analysis.newPreferences)}` : ''}
-${analysis.suggestedAdjustments ? analysis.suggestedAdjustments.map(adj => `- ${adj}`).join('\n') : ''}
-
-TASK:
-Update the system prompt to address these issues:
-1. If user is stuck: Add instructions for clearer, more structured explanations
-2. If new preferences: Incorporate the new preferences into teaching style
-3. Maintain the personalized tone and approach
-4. Keep it concise but effective
-
-Output ONLY the updated system prompt text, no JSON or extra formatting.`;
-
-    try {
-      const response = await this.llm.invoke(adjustmentPrompt);
-      const updatedContent = typeof response.content === 'string' ? response.content : JSON.stringify(response.content);
-
-      const userKey = `${userId}_${targetModel}`;
-      const currentVersion = this.userPromptVersions.get(userKey) || existingPrompt.version;
-      const newVersion = currentVersion + 1;
-      this.userPromptVersions.set(userKey, newVersion);
-
-      /** @type {import('../types/index.js').SystemPrompt} */
-      const updatedPrompt = {
-        ...existingPrompt,
-        id: `prompt_${userId}_${targetModel}_${Date.now()}`,
-        content: updatedContent,
-        version: newVersion,
-        updatedAt: new Date(),
-        metadata: {
-          ...existingPrompt.metadata,
-          adjustedFrom: currentPromptId,
-          adjustmentReason: analysis.isStuck ? 'stuck_detection' : 'preference_change',
-          adjustmentDetails: analysis,
-        },
-      };
-
-      this.systemPrompts.set(updatedPrompt.id, updatedPrompt);
-
-      return this.createResponse({
-        systemPrompt: updatedPrompt,
-        previousVersion: existingPrompt.version,
-        newVersion: updatedPrompt.version,
-        message: 'System prompt adjusted based on feedback',
-      });
-    } catch (error) {
-      return this.createResponse(null, `Error adjusting prompt: ${error}`);
-    }
+    console.log(`💡 [Model 2] Incorporating feedback`);
+    return this.createResponse({ acknowledged: true });
   }
 }
 

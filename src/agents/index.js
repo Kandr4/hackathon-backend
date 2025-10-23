@@ -14,10 +14,12 @@ export { ConversationAnalyzer } from './individual/ConversationAnalyzer.js';
 export { TeacherModel } from './individual/TeacherModel.js';
 export { ResponseEvaluator } from './individual/ResponseEvaluator.js';
 export { SyntheticEvaluator } from './individual/SyntheticEvaluator.js';
+export { VideoGenerator } from './individual/VideoGenerator.js';
+export { FlashcardGenerator } from './individual/FlashcardGenerator.js';
 export { default as config, validateConfig } from './config/index.js';
 
 // Create a singleton instance of the orchestrator for the backend
 import { AdaptiveLearningOrchestrator } from './core/AdaptiveLearningOrchestrator.js';
 export const orchestrator = new AdaptiveLearningOrchestrator();
 
-console.log('✅ Adaptive Learning Agent System initialized with 6-model architecture');
+console.log('✅ Adaptive Learning Agent System initialized with 8-model multimodal architecture');

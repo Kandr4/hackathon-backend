@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import authRoutes from './routes/authRoutes.js';
 import topicRoutes from './routes/topicRoutes.js';
 import lessonRoutes from './routes/lessonRoutes.js';
@@ -11,6 +13,9 @@ import evaluationRoutes from './routes/evaluationRoutes.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import pool from './config/database.js';
 import { validateConfig } from './agents/index.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 dotenv.config();
 
@@ -37,6 +42,16 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Server is running' });
 });
+
+// Static file serving for generated videos
+const videosDir = path.join(__dirname, '..', 'generated_videos');
+app.use('/videos', (req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  next();
+}, express.static(videosDir));
+console.log(`📁 Serving videos from: ${videosDir}`);
 
 // API Routes
 app.use('/api/auth', authRoutes);

@@ -150,6 +150,47 @@ export const generateInitialExplanation = async (req, res, next) => {
 
     console.log('🎓 [Initial Lesson] Generating complete explanation for:', lessonContext.title);
 
+    // ===== NEW: Analyze format preference from any user input =====
+    // Check if there's a user message in the request body that contains format preferences
+    const userMessage = req.body?.message || '';
+    let formatPreference = 'text'; // Default
+    
+    if (userMessage) {
+      console.log('🔍 [Model 2] Analyzing user message for format preferences...');
+      const formatAnalysisResponse = await orchestrator.communication.sendMessage(
+        'ChatController',
+        'SystemPromptGenerator',
+        {
+          action: 'analyze_preferences',
+          data: {
+            userId,
+            userMessage,
+            userPreferences,
+            conversationHistory: [],
+          },
+        }
+      );
+
+      formatPreference = formatAnalysisResponse.success && formatAnalysisResponse.data?.formatAnalysis
+        ? formatAnalysisResponse.data.formatAnalysis.preferredFormat
+        : userPreferences.formatPreference || 'text';
+      
+      console.log(`✅ [Model 2] Detected format preference: ${formatPreference}`);
+    } else {
+      // Use stored preference from database
+      formatPreference = userPreferences.formatPreference || 'text';
+      console.log(`📝 [Model 2] Using stored format preference: ${formatPreference}`);
+    }
+
+    // ===== Route to appropriate model based on format =====
+    const modelRouting = {
+      'text': 'TeacherModel',
+      'video': 'VideoGenerator',
+      'flashcards': 'FlashcardGenerator'
+    };
+    const targetModel = modelRouting[formatPreference] || 'TeacherModel';
+    console.log(`🔀 Routing initial explanation to: ${targetModel}`);
+
     // Generate personalized system prompt (Model 2)
     const teacherPromptResponse = await orchestrator.communication.sendMessage(
       'ChatController',
@@ -169,10 +210,11 @@ export const generateInitialExplanation = async (req, res, next) => {
       ? teacherPromptResponse.data.systemPrompt.content 
       : null;
 
-    // Generate comprehensive lesson explanation (Model 4) with retry logic
-    console.log('👨‍🏫 [Model 4] Generating initial lesson explanation...');
+    // Generate comprehensive lesson explanation (Model 4/7/8 based on preference) with retry logic
+    console.log(`👨‍🏫 [${targetModel}] Generating initial lesson explanation in ${formatPreference} format...`);
     
     let explanation = null;
+    let responseType = formatPreference;
     let evaluation = null;
     let attempts = 0;
     const maxAttempts = 3;
@@ -183,7 +225,7 @@ export const generateInitialExplanation = async (req, res, next) => {
       // Generate teaching response
       const teachingResponse = await orchestrator.communication.sendMessage(
         'ChatController',
-        'TeacherModel',
+        targetModel,
         {
           action: 'teach',
           data: {
@@ -206,12 +248,13 @@ Please address these issues and provide a better explanation.`,
             },
             conversationHistory: [],
             systemPromptContent: teacherPromptContent,
+            userPreferences,
           },
         }
       );
 
       if (!teachingResponse.success) {
-        console.error('Model 4 teaching failed:', teachingResponse.error);
+        console.error(`${targetModel} teaching failed:`, teachingResponse.error);
         if (attempts === maxAttempts) {
           throw new Error(`Failed to generate lesson explanation after ${maxAttempts} retries: ${teachingResponse.error}`);
         }
@@ -219,6 +262,10 @@ Please address these issues and provide a better explanation.`,
       }
 
       explanation = teachingResponse.data.response;
+      // Detect response type from teaching response
+      if (teachingResponse.data.responseType) {
+        responseType = teachingResponse.data.responseType;
+      }
 
       // Evaluate the explanation (Model 5)
       console.log(`📊 [Model 5] Evaluating explanation (Attempt ${attempts}/${maxAttempts})...`);
@@ -236,6 +283,7 @@ Please address these issues and provide a better explanation.`,
             },
             userPreferences,
             conversationHistory: [],
+            responseType, // Include response type for appropriate evaluation
           },
         }
       );
@@ -315,6 +363,7 @@ Please address these issues and provide a better explanation.`,
 
     const result = {
       response: explanation,
+      responseType, // Include the format type: 'text', 'video', or 'flashcards'
       type: 'initial_explanation',
       passed: evaluation.passed,
       score: evaluation.totalScore,
@@ -326,6 +375,8 @@ Please address these issues and provide a better explanation.`,
       metadata: {
         lessonTitle: lessonContext.title,
         topic: lessonContext.topic_name,
+        formatUsed: formatPreference,
+        modelUsed: targetModel,
       },
     };
         
@@ -503,10 +554,59 @@ export const generateAIResponse = async (req, res, next) => {
       }
     }
 
-    // ===== STEP 3: Model 4 - Generate Teaching Response with Retry =====
-    console.log('👨‍🏫 [Model 4] Generating teaching response...');
+    // ===== STEP 2.5: Model 2 - Analyze Output Format Preference & Update Preferences =====
+    console.log('📊 [Model 2] Analyzing output format preference and updating user preferences...');
+    const formatAnalysisResponse = await orchestrator.communication.sendMessage(
+      'ChatController',
+      'SystemPromptGenerator',
+      {
+        action: 'analyze_preferences',
+        data: {
+          userId,              // User ID for database updates
+          userMessage: message, // Current user message for preference detection
+          userPreferences,
+          conversationHistory,
+        },
+      }
+    );
+
+    const formatPreference = formatAnalysisResponse.success && formatAnalysisResponse.data?.formatAnalysis
+      ? formatAnalysisResponse.data.formatAnalysis.preferredFormat
+      : 'text';
+
+    const preferencesUpdated = formatAnalysisResponse.data?.formatAnalysis?.preferencesUpdated || false;
+    
+    if (preferencesUpdated) {
+      console.log(`✅ [Model 2] User preferences updated - new format: ${formatPreference}`);
+    } else {
+      console.log(`📝 [Model 2] Using existing format preference: ${formatPreference}`);
+    }
+
+    // ===== STEP 2.6: Model 3 - Route to Appropriate Teacher =====
+    const routingResponse = await orchestrator.communication.sendMessage(
+      'ChatController',
+      'ConversationAnalyzer',
+      {
+        action: 'route_to_teacher',
+        data: {
+          formatPreference,
+          userMessage: message,
+          lessonContext,
+        },
+      }
+    );
+
+    const targetModel = routingResponse.success && routingResponse.data?.targetModel
+      ? routingResponse.data.targetModel
+      : 'TeacherModel';
+
+    console.log(`🔀 Routing to: ${targetModel}`);
+
+    // ===== STEP 3: Generate Teaching Response with Retry (Multimodal) =====
+    console.log(`👨‍🏫 [${targetModel}] Generating ${formatPreference} response...`);
     
     let teacherResponse = null;
+    let responseType = formatPreference; // 'text', 'video', or 'flashcards'
     let evaluation = null;
     let attempts = 0;
     const maxAttempts = 3;
@@ -516,7 +616,7 @@ export const generateAIResponse = async (req, res, next) => {
 
       const teachingResponse = await orchestrator.communication.sendMessage(
         'ChatController',
-        'TeacherModel',
+        targetModel,
         {
           action: 'teach',
           data: {
@@ -539,12 +639,13 @@ Please provide an improved response that addresses these issues.`,
             } : null,
             conversationHistory,
             systemPromptContent: teacherPromptContent,
+            userPreferences,
           },
         }
       );
 
       if (!teachingResponse.success) {
-        console.error('Model 4 teaching failed:', teachingResponse.error);
+        console.error(`${targetModel} teaching failed:`, teachingResponse.error);
         if (attempts === maxAttempts) {
           return res.status(500).json({
             error: 'Failed to generate teaching response after retries',
@@ -555,16 +656,19 @@ Please provide an improved response that addresses these issues.`,
       }
 
       teacherResponse = teachingResponse.data.response;
+      responseType = teachingResponse.data.responseType || formatPreference;
 
       // ===== STEP 4: Model 5 - Evaluate Response =====
-      console.log(`📊 [Model 5] Evaluating response (Attempt ${attempts}/${maxAttempts})...`);
+      console.log(`📊 [Model 5] Evaluating ${responseType} response (Attempt ${attempts}/${maxAttempts})...`);
       const evaluationResponse = await orchestrator.communication.sendMessage(
         'ChatController',
         'ResponseEvaluator',
         {
           action: 'evaluate_response',
           data: {
-            teachingResponse: teacherResponse,
+            teachingResponse: typeof teacherResponse === 'string' 
+              ? teacherResponse 
+              : JSON.stringify(teacherResponse),
             userMessage: message,
             lessonContext: lessonContext ? {
               title: lessonContext.title,
@@ -572,6 +676,7 @@ Please provide an improved response that addresses these issues.`,
             } : null,
             userPreferences,
             conversationHistory,
+            responseType, // Tell evaluator what type of response this is
           },
         }
       );
@@ -598,6 +703,7 @@ Please provide an improved response that addresses these issues.`,
       
       return res.json({
         response: teacherResponse,
+        responseType,
         passed: false,
         score: evaluation.totalScore,
         feedback: evaluation.overallFeedback,
@@ -610,11 +716,16 @@ Please provide an improved response that addresses these issues.`,
 
     // ===== STEP 6: Save to Database =====
     if (lessonId) {
+      // For non-text responses, serialize them before saving
+      const messageToSave = responseType === 'text' 
+        ? teacherResponse 
+        : JSON.stringify({ type: responseType, data: teacherResponse });
+
       await pool.query(
         `INSERT INTO chat_messages 
          (user_id, lesson_id, message, is_user)
          VALUES ($1, $2, $3, $4)`,
-        [userId, lessonId, teacherResponse, false]
+        [userId, lessonId, messageToSave, false]
       );
 
       // Get topic_id for lesson_evaluations
@@ -646,6 +757,7 @@ Please provide an improved response that addresses these issues.`,
     // ===== STEP 7: Send Response to Frontend =====
     res.json({
       response: teacherResponse,
+      responseType, // 'text', 'video', or 'flashcards'
       passed: true,
       score: evaluation.totalScore,
       evaluation: {
@@ -660,6 +772,8 @@ Please provide an improved response that addresses these issues.`,
         promptsAdjusted: analysis.needsAdjustment,
       },
       metadata: {
+        targetModel,
+        formatPreference,
         model3: 'ConversationAnalyzer',
         model4: 'TeacherModel',
         model5: 'ResponseEvaluator',

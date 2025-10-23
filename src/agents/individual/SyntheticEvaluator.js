@@ -9,7 +9,10 @@ export class SyntheticEvaluator extends BaseAgent {
   constructor() {
     super({
       name: 'SyntheticEvaluator',
-      model: 'gpt-4o-mini',
+      model: 'gpt-5-thinking',
+      reasoning:{
+        "effort": "high"
+      },
       temperature: 0.8, // Higher temperature for varied personas
       maxTokens: 2000,
       systemPrompt: 'You are a synthetic student evaluating an educational system.',

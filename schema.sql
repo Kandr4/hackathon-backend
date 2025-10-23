@@ -17,6 +17,13 @@ CREATE TABLE users (
     username VARCHAR(100) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
+    
+    -- User Preferences (for Model 2 - Preference Management)
+    learning_style VARCHAR(50),
+    pace VARCHAR(20) DEFAULT 'medium',
+    complexity VARCHAR(20) DEFAULT 'intermediate',
+    format_preference VARCHAR(20) DEFAULT 'text',
+    
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );

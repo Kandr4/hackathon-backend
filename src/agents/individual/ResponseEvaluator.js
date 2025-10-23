@@ -5,14 +5,18 @@ import config from '../config/index.js';
  * Model 5: Response Evaluator
  * Creates rubrics and evaluates Model 4's teaching responses
  * Only responses scoring above 70 are sent to the frontend
+ * Uses o1 (GPT-thinking high) for rigorous evaluation
  */
 export class ResponseEvaluator extends BaseAgent {
   constructor() {
     super({
       name: 'ResponseEvaluator',
-      model: 'gpt-4o-mini',
-      temperature: 0.2,
-      maxTokens: 2000,
+      model: 'gpt-5-thinking',
+      reasoning: {
+        "effort": "high"
+      }, // Using o1 for deep, rigorous evaluation
+      temperature: 1, // o1 models don't support temperature
+      maxTokens: 12000, // o1 supports larger context for detailed evaluation
       systemPrompt: 'You are an expert educational content evaluator who creates rubrics and scores teaching responses.',
     });
     
@@ -63,11 +67,51 @@ export class ResponseEvaluator extends BaseAgent {
       userMessage, 
       lessonContext = {},
       userPreferences = {},
-      conversationHistory = []
+      conversationHistory = [],
+      responseType = 'text'  // NEW: Support for multimodal responses
     } = data;
 
     const lessonTitle = lessonContext?.title || 'General Learning Topic';
     const lessonTopic = lessonContext?.topic || 'General';
+
+    // Adapt prompt based on response type
+    let responseDescription = '';
+    if (responseType === 'video') {
+      responseDescription = `
+RESPONSE TYPE: Educational Video
+The teaching response contains:
+- videoUrl: URL to the generated video
+- narration: Audio narration script
+- keyTakeaways: List of main learning points
+- title: Video title
+
+Evaluate this based on video-specific criteria:
+- Visual effectiveness (if description available)
+- Narration quality and clarity
+- Key takeaways completeness
+- Educational value of video format
+`;
+    } else if (responseType === 'flashcards') {
+      responseDescription = `
+RESPONSE TYPE: Flashcard Set
+The teaching response contains:
+- flashcards: Array of front/back cards
+- difficulty levels
+- hints and mnemonics
+- study tips
+
+Evaluate this based on flashcard-specific criteria:
+- Card quality (clear questions, complete answers)
+- Appropriate difficulty progression
+- Effective use of memory techniques
+- Coverage of key concepts
+`;
+    } else {
+      responseDescription = `
+RESPONSE TYPE: Text-based Lesson
+Standard conversational teaching response.
+`;
+    }
 
     const evaluationPrompt = `You are evaluating an AI tutor's response to a student. Your job is to:
 1. Create a rubric for what an ideal "golden" response should contain
@@ -79,8 +123,10 @@ Lesson: ${lessonTitle}
 Topic: ${lessonTopic}
 Student asked: "${userMessage}"
 
+${responseDescription}
+
 TEACHING RESPONSE TO EVALUATE:
-"${teachingResponse}"
+"${typeof teachingResponse === 'object' ? JSON.stringify(teachingResponse, null, 2) : teachingResponse}"
 
 USER PREFERENCES (consider these in evaluation):
 ${JSON.stringify(userPreferences, null, 2)}
@@ -96,10 +142,11 @@ Define 5 criteria with weights that sum to 100:
 - Clarity & Understandability (weight: 25)
 - Relevance to Question (weight: 20)
 - Pedagogical Quality (examples, structure) (weight: 15)
-- Alignment with User Preferences (weight: 10)
+- Alignment with User Preferences & Format (weight: 10)
 
 Step 2 - EVALUATE EACH CRITERION:
 Score each criterion (0-100), then multiply by weight to get weighted score.
+${responseType !== 'text' ? `IMPORTANT: Consider the appropriateness of the ${responseType} format for this learning objective.` : ''}
 
 Step 3 - CALCULATE TOTAL SCORE:
 Sum all weighted scores for final score (0-100).
@@ -148,6 +195,7 @@ Return ONLY valid JSON, no markdown or extra text.`;
         totalScore,
         passed,
         passingScore: this.PASSING_SCORE,
+        responseType,  // Include response type in evaluation result
         overallFeedback: evaluation.overallFeedback || '',
         improvements: evaluation.improvements || [],
         evaluatedAt: new Date(),

@@ -5,15 +5,36 @@ import config from '../config/index.js';
  * Model 3: Conversation Analyzer
  * Detects when user is stuck or expresses new preferences
  * Sends feedback to Model 2 (System Prompt Creator) for adjustments
+ * Uses GPT-4o for advanced preference detection and management
  */
 export class ConversationAnalyzer extends BaseAgent {
   constructor() {
     super({
       name: 'ConversationAnalyzer',
-      model: 'gpt-4o-mini',
+      model: 'gpt-5-nano', // Using GPT-4o (gpt5 equivalent) for preference analysis
       temperature: 0.3,
       maxTokens: 1500,
-      systemPrompt: 'You are an expert at analyzing learning conversations to detect struggles and preferences.',
+      systemPrompt: `You are an expert conversation analyzer for educational AI systems.
+
+Your primary responsibilities:
+1. **Detect Global Learning Preferences**: Identify when users express preferences that should be saved globally
+2. **Detect Preference Changes**: Recognize when users want to change existing preferences
+3. **Identify Outdated Preferences**: Flag preferences that conflict with new ones and should be removed
+4. **Detect Learning Struggles**: Identify when users are stuck or confused
+
+Key Capabilities:
+- Parse explicit preferences: "I hate text, use flashcards", "I prefer videos", "Give me more examples"
+- Detect implicit preferences from patterns: repeated requests, learning style indicators
+- Identify conflicting preferences: "No, I like videos better" → remove flashcard preference
+- Distinguish between one-off requests vs. global preferences
+- Track user frustration and confusion signals
+
+Preference Types to Track:
+- Format preferences: text, video, flashcards
+- Learning style: visual, auditory, reading/writing, kinesthetic
+- Explanation style: concise, detailed, balanced
+- Pace: slow, normal, fast
+- Wants examples, analogies, exercises (boolean preferences)`,
     });
   }
 
@@ -44,9 +65,36 @@ export class ConversationAnalyzer extends BaseAgent {
     switch (action) {
       case 'analyze_conversation':
         return await this.analyzeConversation(data);
+      case 'route_to_teacher':
+        return await this.routeToAppropriateTeacher(data);
       default:
         return this.createResponse(null, 'Unsupported action');
     }
+  }
+
+  /**
+   * Route to the appropriate teaching model based on format preference
+   * @private
+   */
+  async routeToAppropriateTeacher(data) {
+    const { formatPreference, userMessage, lessonContext } = data;
+
+    // Map format preferences to model names
+    const modelRouting = {
+      'text': 'TeacherModel',        // Model 4 - Traditional text explanations
+      'video': 'VideoGenerator',      // Model 7 - Video scripts/storyboards
+      'flashcards': 'FlashcardGenerator'  // Model 8 - Flashcard sets
+    };
+
+    const targetModel = modelRouting[formatPreference] || 'TeacherModel';
+
+    console.log(`🔀 [Model 3] Routing to ${targetModel} for ${formatPreference} format`);
+
+    return this.createResponse({
+      targetModel,
+      format: formatPreference,
+      message: `Routing to ${targetModel} for ${formatPreference} learning`,
+    });
   }
 
   /**
@@ -61,41 +109,50 @@ export class ConversationAnalyzer extends BaseAgent {
       lessonContext = null 
     } = data;
 
-    const analysisPrompt = `You are analyzing a learning conversation to detect:
-1. If the user is stuck or struggling with the material
-2. If the user has expressed new learning preferences
-3. If the teaching approach needs adjustment
+    const analysisPrompt = `You are analyzing a learning conversation to detect GLOBAL PREFERENCES that should be saved to the user's profile.
 
 USER MESSAGE: "${userMessage}"
 
 CONVERSATION HISTORY (last 10 messages):
 ${conversationHistory.slice(-10).map((msg, i) => `${i + 1}. ${msg.isUser ? 'Student' : 'Teacher'}: ${msg.message.substring(0, 200)}...`).join('\n')}
 
-CURRENT PREFERENCES:
+CURRENT SAVED PREFERENCES:
 ${JSON.stringify(currentPreferences, null, 2)}
 
 ${lessonContext ? `LESSON CONTEXT:
 Title: ${lessonContext.title}
 Topic: ${lessonContext.topic}` : ''}
 
-ANALYSIS TASK:
-Determine if:
-A) User is stuck (repeated questions, confusion signals, frustration)
-B) User expressed a direct preference (wants more examples, slower pace, different style)
-C) Teaching approach needs adjustment based on patterns
+CRITICAL TASK: Detect GLOBAL preferences to save/update/remove from user profile.
 
-STUCK INDICATORS:
-- Asking the same question multiple times
-- Expressing confusion ("I don't understand", "This is confusing")
-- Asking for clarification repeatedly
-- Saying they're lost or overwhelmed
-- Going in circles without progress
+🔍 PREFERENCE DETECTION RULES:
 
-PREFERENCE INDICATORS:
-- Direct requests ("Please give more examples", "Can you explain simpler")
-- Feedback on teaching style ("Too fast", "Too technical", "Not enough detail")
-- Requests for specific formats (visual, analogies, step-by-step)
-- Expressions of learning style preferences
+**EXPLICIT FORMAT PREFERENCES** (High Priority - SAVE GLOBALLY):
+- "I hate text" / "too much text" → Remove text, suggest video/flashcards
+- "use flashcards" / "give me flashcards" → formatPreference = "flashcards"
+- "I prefer videos" / "make a video" → formatPreference = "video"
+- "explain in text" / "write it out" → formatPreference = "text"
+
+**CHANGING PREFERENCES** (REMOVE OLD, SAVE NEW):
+- "No, I like X better" → Remove previous format, set new format
+- "Actually, I prefer Y" → Update preference, remove conflicting ones
+- User contradicts previous preference → Flag for removal
+
+**IMPLICIT GLOBAL PREFERENCES**:
+- "always give examples" → wants_examples = true
+- "I learn better with analogies" → wants_analogies = true
+- "keep it simple" → explanation_style = "concise"
+- "I like detailed explanations" → explanation_style = "detailed"
+
+**ONE-OFF REQUESTS** (DO NOT SAVE):
+- "can you give AN example?" → Not global, just this time
+- "explain THIS again" → Not a preference
+- "what does THIS mean?" → Normal question
+
+**LEARNING STRUGGLES** (Detect but don't save as preference):
+- Repeated questions about same concept
+- "I don't understand" / "I'm confused"
+- Multiple clarification requests
 
 Respond with JSON in this EXACT format:
 {
@@ -103,16 +160,20 @@ Respond with JSON in this EXACT format:
   "stuckReason": "string or null",
   "stuckSeverity": "low|medium|high or null",
   "hasNewPreference": boolean,
+  "isGlobalPreference": boolean,
   "newPreferences": {
-    "explanation_style": "string or null",
+    "formatPreference": "text|video|flashcards|null",
+    "explanation_style": "concise|detailed|balanced|null",
     "wants_examples": boolean or null,
     "wants_analogies": boolean or null,
-    "pace": "string or null",
-    "other": "string or null"
+    "wants_exercises": boolean or null,
+    "pace": "slow|normal|fast|null",
+    "learning_style": "visual|auditory|reading_writing|kinesthetic|mixed|null"
   },
+  "preferencesToRemove": ["list", "of", "conflicting", "preference", "names"],
+  "reasoning": "Why this is/isn't a global preference",
   "needsAdjustment": boolean,
   "suggestedAdjustments": ["array of suggestions"],
-  "feedback": "Overall feedback for system prompt adjustment",
   "confidence": number (0-100)
 }
 
@@ -130,10 +191,12 @@ Return ONLY valid JSON, no markdown or extra text.`;
         stuckReason: analysis.stuckReason || null,
         stuckSeverity: analysis.stuckSeverity || null,
         hasNewPreference: analysis.hasNewPreference || false,
+        isGlobalPreference: analysis.isGlobalPreference || false,
         newPreferences: analysis.newPreferences || {},
+        preferencesToRemove: analysis.preferencesToRemove || [],
+        reasoning: analysis.reasoning || '',
         needsAdjustment: analysis.needsAdjustment || false,
         suggestedAdjustments: analysis.suggestedAdjustments || [],
-        feedback: analysis.feedback || '',
         confidence: analysis.confidence || 50,
         analyzedAt: new Date(),
       };

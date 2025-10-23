@@ -5,15 +5,16 @@ import config from '../config/index.js';
  * Model 4: Teacher Model
  * Main teaching model that generates lesson explanations in chat format
  * Uses personalized system prompts from Model 2
+ * Uses o1-mini (GPT-thinking medium) for deeper reasoning
  */
 export class TeacherModel extends BaseAgent {
   constructor() {
     super({
       name: 'TeacherModel',
-      model: 'gpt-4o-mini',
-      temperature: 0.8,
-      maxTokens: 2500,
-      systemPrompt: 'You are an adaptive AI tutor.',
+      model: 'o1-mini', // Using o1-mini for deeper reasoning
+      temperature: 1, // o1 models don't support temperature, but keeping for compatibility
+      maxTokens: 8000, // o1-mini supports larger context
+      systemPrompt: 'You are an adaptive AI tutor.', // o1 models use different prompting
     });
     
     /** @type {Map<string, string>} */
@@ -82,7 +83,8 @@ export class TeacherModel extends BaseAgent {
       userMessage, 
       lessonContext = {}, 
       conversationHistory = [],
-      systemPromptContent = null 
+      systemPromptContent = null,
+      userPreferences = {} 
     } = data;
 
     // Detect if this is an initial lesson explanation
@@ -92,12 +94,17 @@ export class TeacherModel extends BaseAgent {
     // Get the active system prompt for this user (OVERRIDE for initial explanations)
     let activePrompt;
     if (isInitialExplanation) {
+      // Build preference-aware prompt for initial explanation
+      const prefContext = this.buildPreferenceContext(userPreferences);
+      
       activePrompt = `You are an expert educator creating the FIRST comprehensive lesson explanation. Your response MUST be:
 - A complete, in-depth tutorial covering all major concepts
 - 600-1000 words minimum
 - Include multiple examples and code demonstrations
 - Structured with clear sections
 - Educational and engaging
+
+${prefContext}
 
 DO NOT just say "Welcome" or give a brief intro. This is the MAIN LESSON CONTENT.`;
     } else {
