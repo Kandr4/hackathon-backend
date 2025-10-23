@@ -6,7 +6,9 @@ import {
   updateLesson,
   deleteLesson,
   completeLesson,
-  uncompleteLesson
+  uncompleteLesson,
+  generateAILesson,
+  evaluateLesson
 } from '../controllers/lessonController.js';
 import { authenticateToken } from '../middleware/auth.js';
 
@@ -21,5 +23,9 @@ router.put('/:lessonId', updateLesson);
 router.delete('/:lessonId', deleteLesson);
 router.post('/:lessonId/complete', completeLesson);
 router.post('/:lessonId/uncomplete', uncompleteLesson);
+
+// AI-powered endpoints
+router.post('/topic/:topicId/lessons/generate-ai', generateAILesson);
+router.post('/:lessonId/evaluate', evaluateLesson);
 
 export default router;

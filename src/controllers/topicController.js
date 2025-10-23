@@ -1,4 +1,5 @@
 import pool from '../config/database.js';
+import { orchestrator } from '../agents/index.js';
 
 export const getTopics = async (req, res, next) => {
   try {
@@ -84,6 +85,9 @@ export const getTopic = async (req, res, next) => {
   }
 };
 
+/**
+ * Create Topic - Automatically generates learning path using Model 1
+ */
 export const createTopic = async (req, res, next) => {
   const { name, description } = req.body;
 
@@ -104,106 +108,120 @@ export const createTopic = async (req, res, next) => {
 
     const topic = topicResult.rows[0];
 
-    // Generate mock lessons
-    const lessons = [
+    // ===== Model 1: Generate Learning Path =====
+    console.log('📚 [Model 1] Generating learning path for:', name);
+    const learningPathResponse = await orchestrator.communication.sendMessage(
+      'TopicController',
+      'LearningPathGenerator',
       {
-        title: `Introduction to ${name}`,
-        content: `Welcome to ${name}! In this lesson, we'll cover the fundamentals and get you started with the basics.`,
-        order_index: 0
-      },
-      {
-        title: `Core Concepts of ${name}`,
-        content: `Now that you understand the basics, let's dive deeper into the core concepts and principles of ${name}.`,
-        order_index: 1
-      },
-      {
-        title: `Practical Applications`,
-        content: `Let's explore how ${name} is used in real-world scenarios and practice with some hands-on examples.`,
-        order_index: 2
-      },
-      {
-        title: `Advanced Techniques`,
-        content: `Take your knowledge to the next level with these advanced techniques and best practices in ${name}.`,
-        order_index: 3
-      },
-      {
-        title: `Summary and Next Steps`,
-        content: `Congratulations! Let's review what you've learned and discuss where to go from here with ${name}.`,
-        order_index: 4
+        action: 'generate_learning_path',
+        data: {
+          topicName: name,
+          topicDescription: description || null,
+          userId: req.user.id,
+        },
       }
-    ];
+    );
 
-    for (const lesson of lessons) {
+    if (!learningPathResponse.success) {
+      console.error('Model 1 failed:', learningPathResponse.error);
+      // Fallback to basic structure if Model 1 fails
       await client.query(
-        'INSERT INTO lessons (topic_id, title, content, order_index) VALUES ($1, $2, $3, $4)',
-        [topic.id, lesson.title, lesson.content, lesson.order_index]
+        `INSERT INTO learning_paths (user_id, topic_id, lesson_outline, total_lessons)
+         VALUES ($1, $2, $3, $4)`,
+        [req.user.id, topic.id, JSON.stringify([]), 0]
       );
+      await client.query('COMMIT');
+      return res.status(201).json({
+        message: 'Topic created with basic structure',
+        topic,
+        warning: 'Learning path generation failed',
+      });
     }
 
-    // Generate mock quizzes
-    const quizzes = [
-      {
-        title: `${name} - Basics Quiz`,
-        description: 'Test your understanding of the fundamental concepts',
-        order_index: 5,
-        questions: [
-          {
-            question: `What is the primary purpose of ${name}?`,
-            options: ['Option A: To solve basic problems', 'Option B: To improve efficiency', 'Option C: To enable new capabilities', 'Option D: All of the above'],
-            correct_answer: 3
-          },
-          {
-            question: `Which of the following is a key concept in ${name}?`,
-            options: ['Option A: Understanding fundamentals', 'Option B: Ignoring details', 'Option C: Random guessing', 'Option D: Skipping practice'],
-            correct_answer: 0
-          },
-          {
-            question: `How should you approach learning ${name}?`,
-            options: ['Option A: Rush through content', 'Option B: Practice regularly', 'Option C: Avoid examples', 'Option D: Skip lessons'],
-            correct_answer: 1
-          }
-        ]
-      },
-      {
-        title: `${name} - Advanced Quiz`,
-        description: 'Challenge yourself with advanced topics',
-        order_index: 6,
-        questions: [
-          {
-            question: `What is an advanced technique in ${name}?`,
-            options: ['Option A: Applying best practices', 'Option B: Ignoring guidelines', 'Option C: Using outdated methods', 'Option D: Avoiding documentation'],
-            correct_answer: 0
-          },
-          {
-            question: `In real-world applications, ${name} is most effective when:`,
-            options: ['Option A: Used without planning', 'Option B: Combined with proper understanding', 'Option C: Applied randomly', 'Option D: Avoided completely'],
-            correct_answer: 1
-          }
-        ]
-      }
-    ];
+    const learningPath = learningPathResponse.data.learningPath;
 
-    for (const quiz of quizzes) {
-      const quizResult = await client.query(
-        'INSERT INTO quizzes (topic_id, title, description, order_index) VALUES ($1, $2, $3, $4) RETURNING *',
-        [topic.id, quiz.title, quiz.description, quiz.order_index]
+    // Save learning path to database
+    await client.query(
+      `INSERT INTO learning_paths (user_id, topic_id, lesson_outline, total_lessons, estimated_duration_hours)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [
+        req.user.id,
+        topic.id,
+        JSON.stringify(learningPath.lessons || []),
+        learningPath.totalLessons,
+        learningPath.estimatedDurationHours,
+      ]
+    );
+
+    // Create lessons and quizzes from learning path
+    let quizCounter = 1;
+    for (const lesson of learningPath.lessons || []) {
+      // Create the lesson
+      await client.query(
+        `INSERT INTO lessons (topic_id, title, content, order_index)
+         VALUES ($1, $2, $3, $4)`,
+        [
+          topic.id,
+          lesson.title,
+          lesson.description || `Content for ${lesson.title}`,
+          lesson.order,
+        ]
       );
 
-      const quizId = quizResult.rows[0].id;
-
-      for (const question of quiz.questions) {
-        await client.query(
-          'INSERT INTO quiz_questions (quiz_id, question, options, correct_answer) VALUES ($1, $2, $3, $4)',
-          [quizId, question.question, JSON.stringify(question.options), question.correct_answer]
+      // Create quiz if this lesson has one
+      if (lesson.hasQuiz) {
+        const quizResult = await client.query(
+          `INSERT INTO quizzes (topic_id, title, description, order_index)
+           VALUES ($1, $2, $3, $4) RETURNING id`,
+          [
+            topic.id,
+            `Quiz ${quizCounter}: ${lesson.title}`,
+            `Test your understanding of ${lesson.title}`,
+            lesson.order,
+          ]
         );
+        
+        const quizId = quizResult.rows[0].id;
+        
+        // Insert quiz questions if they exist
+        if (lesson.quizQuestions && Array.isArray(lesson.quizQuestions)) {
+          for (let i = 0; i < lesson.quizQuestions.length; i++) {
+            const q = lesson.quizQuestions[i];
+            await client.query(
+              `INSERT INTO quiz_questions (quiz_id, question, options, correct_answer, order_index)
+               VALUES ($1, $2, $3, $4, $5)`,
+              [
+                quizId,
+                q.question,
+                JSON.stringify(q.options),
+                q.correctAnswer,
+                i + 1,
+              ]
+            );
+          }
+          console.log(`✅ Created quiz with ${lesson.quizQuestions.length} questions for: ${lesson.title}`);
+        } else {
+          console.warn(`⚠️ No questions generated for quiz: ${lesson.title}`);
+        }
+        
+        quizCounter++;
       }
     }
 
     await client.query('COMMIT');
 
+    // Count the quizzes created
+    const quizCount = learningPath.lessons?.filter(l => l.hasQuiz).length || 0;
+
     res.status(201).json({
-      message: 'Topic created successfully with learning path',
-      topic
+      message: 'Topic created with AI-generated learning path',
+      topic,
+      learningPath: {
+        totalLessons: learningPath.totalLessons,
+        totalQuizzes: quizCount,
+        estimatedDuration: learningPath.estimatedDurationHours,
+      },
     });
   } catch (error) {
     await client.query('ROLLBACK');

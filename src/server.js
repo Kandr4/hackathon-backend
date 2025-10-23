@@ -6,10 +6,21 @@ import topicRoutes from './routes/topicRoutes.js';
 import lessonRoutes from './routes/lessonRoutes.js';
 import quizRoutes from './routes/quizRoutes.js';
 import chatRoutes from './routes/chatRoutes.js';
+import agentRoutes from './routes/agentRoutes.js';
+import evaluationRoutes from './routes/evaluationRoutes.js';
 import { errorHandler, notFound } from './middleware/errorHandler.js';
 import pool from './config/database.js';
+import { validateConfig } from './agents/index.js';
 
 dotenv.config();
+
+// Validate agent configuration
+try {
+  validateConfig();
+} catch (error) {
+  console.error('❌ Agent configuration error:', error.message);
+  console.warn('⚠️ Server will start, but AI features may not work without OPENAI_API_KEY');
+}
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -33,6 +44,8 @@ app.use('/api/topics', topicRoutes);
 app.use('/api/lessons', lessonRoutes);
 app.use('/api/quiz', quizRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/agents', agentRoutes);
+app.use('/api/evaluation', evaluationRoutes);
 
 // Error handling
 app.use(notFound);
