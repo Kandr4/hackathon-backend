@@ -91,18 +91,125 @@ export const createTopic = async (req, res, next) => {
     return res.status(400).json({ error: 'Topic name is required' });
   }
 
+  const client = await pool.connect();
+
   try {
-    const result = await pool.query(
+    await client.query('BEGIN');
+
+    // Create the topic
+    const topicResult = await client.query(
       'INSERT INTO topics (name, description, user_id) VALUES ($1, $2, $3) RETURNING *',
       [name, description || null, req.user.id]
     );
 
+    const topic = topicResult.rows[0];
+
+    // Generate mock lessons
+    const lessons = [
+      {
+        title: `Introduction to ${name}`,
+        content: `Welcome to ${name}! In this lesson, we'll cover the fundamentals and get you started with the basics.`,
+        order_index: 0
+      },
+      {
+        title: `Core Concepts of ${name}`,
+        content: `Now that you understand the basics, let's dive deeper into the core concepts and principles of ${name}.`,
+        order_index: 1
+      },
+      {
+        title: `Practical Applications`,
+        content: `Let's explore how ${name} is used in real-world scenarios and practice with some hands-on examples.`,
+        order_index: 2
+      },
+      {
+        title: `Advanced Techniques`,
+        content: `Take your knowledge to the next level with these advanced techniques and best practices in ${name}.`,
+        order_index: 3
+      },
+      {
+        title: `Summary and Next Steps`,
+        content: `Congratulations! Let's review what you've learned and discuss where to go from here with ${name}.`,
+        order_index: 4
+      }
+    ];
+
+    for (const lesson of lessons) {
+      await client.query(
+        'INSERT INTO lessons (topic_id, title, content, order_index) VALUES ($1, $2, $3, $4)',
+        [topic.id, lesson.title, lesson.content, lesson.order_index]
+      );
+    }
+
+    // Generate mock quizzes
+    const quizzes = [
+      {
+        title: `${name} - Basics Quiz`,
+        description: 'Test your understanding of the fundamental concepts',
+        order_index: 5,
+        questions: [
+          {
+            question: `What is the primary purpose of ${name}?`,
+            options: ['Option A: To solve basic problems', 'Option B: To improve efficiency', 'Option C: To enable new capabilities', 'Option D: All of the above'],
+            correct_answer: 3
+          },
+          {
+            question: `Which of the following is a key concept in ${name}?`,
+            options: ['Option A: Understanding fundamentals', 'Option B: Ignoring details', 'Option C: Random guessing', 'Option D: Skipping practice'],
+            correct_answer: 0
+          },
+          {
+            question: `How should you approach learning ${name}?`,
+            options: ['Option A: Rush through content', 'Option B: Practice regularly', 'Option C: Avoid examples', 'Option D: Skip lessons'],
+            correct_answer: 1
+          }
+        ]
+      },
+      {
+        title: `${name} - Advanced Quiz`,
+        description: 'Challenge yourself with advanced topics',
+        order_index: 6,
+        questions: [
+          {
+            question: `What is an advanced technique in ${name}?`,
+            options: ['Option A: Applying best practices', 'Option B: Ignoring guidelines', 'Option C: Using outdated methods', 'Option D: Avoiding documentation'],
+            correct_answer: 0
+          },
+          {
+            question: `In real-world applications, ${name} is most effective when:`,
+            options: ['Option A: Used without planning', 'Option B: Combined with proper understanding', 'Option C: Applied randomly', 'Option D: Avoided completely'],
+            correct_answer: 1
+          }
+        ]
+      }
+    ];
+
+    for (const quiz of quizzes) {
+      const quizResult = await client.query(
+        'INSERT INTO quizzes (topic_id, title, description, order_index) VALUES ($1, $2, $3, $4) RETURNING *',
+        [topic.id, quiz.title, quiz.description, quiz.order_index]
+      );
+
+      const quizId = quizResult.rows[0].id;
+
+      for (const question of quiz.questions) {
+        await client.query(
+          'INSERT INTO quiz_questions (quiz_id, question, options, correct_answer) VALUES ($1, $2, $3, $4)',
+          [quizId, question.question, JSON.stringify(question.options), question.correct_answer]
+        );
+      }
+    }
+
+    await client.query('COMMIT');
+
     res.status(201).json({
-      message: 'Topic created successfully',
-      topic: result.rows[0]
+      message: 'Topic created successfully with learning path',
+      topic
     });
   } catch (error) {
+    await client.query('ROLLBACK');
     next(error);
+  } finally {
+    client.release();
   }
 };
 
