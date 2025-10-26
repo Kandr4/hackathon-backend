@@ -14,14 +14,39 @@ const createPool = () => {
     return poolInstance;
   }
 
-  poolInstance = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    max: 20, // Maximum number of clients in the pool
-    idleTimeoutMillis: 30000, // Close idle clients after 30 seconds
-    connectionTimeoutMillis: 10000, // Return error after 10 seconds if connection cannot be established
-    // SSL configuration - required for Neon and most cloud PostgreSQL providers
-    ssl: process.env.DATABASE_URL?.includes('sslmode=require') ? { rejectUnauthorized: false } : false
-  });
+  // Checking environment
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // Define base configuration
+  const commonConfig = {
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+  };
+  
+  // Define specific configuration based on environment
+  const environmentConfig = isProduction
+    ? {
+        // --- Production Configuration (NeonDB) ---
+        connectionString: process.env.DATABASE_URL,
+        ssl: {
+          rejectUnauthorized: false
+        }
+      }
+    : {
+        // --- Local Development Configuration ---
+        host: process.env.DB_HOST || 'localhost',
+        port: process.env.DB_PORT || 5432,
+        user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
+        database: process.env.DB_NAME,
+        ssl: false // Important: SSL disabled for local
+      };
+
+  // Merge configurations
+  const poolConfig = { ...commonConfig, ...environmentConfig };
+
+  poolInstance = new Pool(poolConfig);
 
   // Connection event handlers
   poolInstance.on('connect', (client) => {
