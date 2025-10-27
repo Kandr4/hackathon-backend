@@ -4,18 +4,15 @@ import config from '../config/index.js';
 /**
  * Model 8: Flashcard Generator
  * Creates flashcards for spaced repetition learning
- * Uses o1-mini (GPT-thinking medium) for better flashcard generation
+ * Uses Gemini 1.5 Pro for better flashcard generation
  */
 export class FlashcardGenerator extends BaseAgent {
   constructor() {
     super({
       name: 'FlashcardGenerator',
-      model: 'gpt-5-thinking', // Using GPT-5 for deeper reasoning in flashcard creation
-      reasoning: {
-        "effort": "minimum"
-      },
-      temperature: 1, // o1 models don't support temperature
-      maxTokens: 4000,
+      model: 'gemini-2.5-flash', // Using Gemini 1.5 Flash for deeper reasoning in flashcard creation
+      temperature: 1,
+      maxOutputTokens: 4000,
       systemPrompt: 'You are an educational flashcard creator specializing in knowledge retention and spaced repetition.',
     });
   }

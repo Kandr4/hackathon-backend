@@ -6,18 +6,15 @@ import pool from '../../config/database.js';
  * Model 2: System Prompt Creator & Preference Manager
  * Generates and updates system prompts for Model 4 and Model 5
  * Manages global user preferences with update/removal capabilities
- * Uses GPT-4o for intelligent preference detection and management
+ * Uses gemini-2.5-flash for intelligent preference detection and management
  */
 export class SystemPromptGenerator extends BaseAgent {
   constructor() {
     super({
       name: 'SystemPromptGenerator',
-      model: 'gpt-5-thinking', // Using GPT-5 (gpt5 equivalent) for preference analysis
-      reasoning: {
-        "effort": "high"
-      },
+      model: 'gemini-2.5-flash', // Using gemini-2.5-flash for preference analysis
       temperature: 0.3,
-      maxTokens: 2000,
+      maxOutputTokens: 2000,
       systemPrompt: `You are an expert preference analyzer and system prompt creator for educational AI.
 
 Your responsibilities:

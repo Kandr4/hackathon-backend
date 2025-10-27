@@ -100,9 +100,9 @@
 /**
  * @typedef {Object} AgentConfig
  * @property {string} name - Agent name
- * @property {string} model - OpenAI model
+ * @property {string} modelName - Gemini model
  * @property {number} temperature - Temperature setting
- * @property {number} maxTokens - Maximum tokens
+ * @property {number} maxOutputTokens - Maximum output tokens
  * @property {string} systemPrompt - System prompt
  */
 

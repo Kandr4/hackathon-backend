@@ -47,7 +47,7 @@ export class AdaptiveLearningOrchestrator {
     const syntheticEvaluator = new SyntheticEvaluator();
     
     // Model 7: Video Generator (Visual learning)
-    const videoGenerator = new VideoGenerator();
+    //const videoGenerator = new VideoGenerator();
     
     // Model 8: Flashcard Generator (Spaced repetition)
     const flashcardGenerator = new FlashcardGenerator();
@@ -63,7 +63,7 @@ export class AdaptiveLearningOrchestrator {
     this.communication.registerAgent(teacherModel);
     this.communication.registerAgent(responseEvaluator);
     this.communication.registerAgent(syntheticEvaluator);
-    this.communication.registerAgent(videoGenerator);
+    //this.communication.registerAgent(videoGenerator);
     this.communication.registerAgent(flashcardGenerator);
     this.communication.registerAgent(lessonGenerator);
     this.communication.registerAgent(lessonEvaluator);

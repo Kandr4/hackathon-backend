@@ -5,16 +5,16 @@ import config from '../config/index.js';
  * Model 4: Teacher Model
  * Main teaching model that generates lesson explanations in chat format
  * Uses personalized system prompts from Model 2
- * Uses o1-mini (GPT-thinking medium) for deeper reasoning
+ * Uses Gemini 1.5 Flash
  */
 export class TeacherModel extends BaseAgent {
   constructor() {
     super({
       name: 'TeacherModel',
-      model: 'o1-mini', // Using o1-mini for deeper reasoning
-      temperature: 1, // o1 models don't support temperature, but keeping for compatibility
-      maxTokens: 8000, // o1-mini supports larger context
-      systemPrompt: 'You are an adaptive AI tutor.', // o1 models use different prompting
+      model: 'gemini-2.5-flash', // Using Gemini 1.5 Flash for deeper reasoning
+      temperature: 1,
+      maxOutputTokens: 8000,
+      systemPrompt: 'You are an adaptive AI tutor.',
     });
     
     /** @type {Map<string, string>} */

@@ -5,15 +5,15 @@ import config from '../config/index.js';
  * Model 3: Conversation Analyzer
  * Detects when user is stuck or expresses new preferences
  * Sends feedback to Model 2 (System Prompt Creator) for adjustments
- * Uses GPT-4o for advanced preference detection and management
+ * Uses Gemini-1.5-Pro for advanced preference detection and management
  */
 export class ConversationAnalyzer extends BaseAgent {
   constructor() {
     super({
       name: 'ConversationAnalyzer',
-      model: 'gpt-5-nano', // Using GPT-4o (gpt5 equivalent) for preference analysis
+      model: 'gemini-2.5-flash', // Using gemini-2.5-flash for preference analysis
       temperature: 0.3,
-      maxTokens: 1500,
+      maxOutputTokens: 1500,
       systemPrompt: `You are an expert conversation analyzer for educational AI systems.
 
 Your primary responsibilities:

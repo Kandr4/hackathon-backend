@@ -1,4 +1,4 @@
-import { ChatOpenAI } from '@langchain/openai';
+import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import config from '../config/index.js';
 
 /**
@@ -17,17 +17,17 @@ export class BaseAgent {
   }
 
   /**
-   * Initialize the LLM with OpenAI
+   * Initialize the LLM with GEMINI model
    * @private
    */
   initializeLLM() {
     const modelName = this.config.model;
     
-    this.llm = new ChatOpenAI({
-      modelName: modelName,
+    this.llm = new ChatGoogleGenerativeAI({
+      model: modelName,
       temperature: this.config.temperature,
-      maxTokens: this.config.maxTokens,
-      openAIApiKey: config.openaiApiKey,
+      maxTokens: this.config.maxOutputTokens,
+      apiKey: config.geminiApiKey,
     });
   }
 

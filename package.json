@@ -19,6 +19,7 @@
   "license": "ISC",
   "dependencies": {
     "@langchain/core": "^1.0.1",
+    "@langchain/google-genai": "^1.0.0",
     "@langchain/openai": "^1.0.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",

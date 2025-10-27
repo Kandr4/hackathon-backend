@@ -5,15 +5,15 @@ dotenv.config();
 /**
  * @typedef {Object} AgentConfig
  * @property {string} name - Agent name
- * @property {string} model - OpenAI model to use
+ * @property {string} model - Gemini model to use
  * @property {number} temperature - Temperature for LLM responses
- * @property {number} maxTokens - Maximum tokens for responses
+ * @property {number} maxOutputTokens - Maximum output tokens for responses
  * @property {string} systemPrompt - System prompt for the agent
  */
 
 export const config = {
-  // OpenAI Configuration
-  openaiApiKey: process.env.OPENAI_API_KEY || '',
+  // Gemini Configuration
+  geminiApiKey: process.env.GEMINI_API_KEY || '',
   
   // System Configuration
   system: {
@@ -26,33 +26,33 @@ export const config = {
   agents: {
     systemPromptGenerator: {
       name: 'SystemPromptGenerator',
-      model: 'gpt-4o-mini',
+      model: 'gemini-2.5-flash',
       temperature: 0.7,
-      maxTokens: 1500,
+      maxOutputTokens: 1500,
     },
     lessonGenerator: {
       name: 'LessonGenerator',
-      model: 'gpt-4o-mini',
+      model: 'gemini-2.5-flash',
       temperature: 0.8,
-      maxTokens: 3000,
+      maxOutputTokens: 3000,
     },
     lessonEvaluator: {
       name: 'LessonEvaluator',
-      model: 'gpt-4o-mini',
+      model: 'gemini-2.5-flash',
       temperature: 0.3,
-      maxTokens: 2000,
+      maxOutputTokens: 2000,
     },
     changeDetector: {
       name: 'ChangeDetector',
-      model: 'gpt-4o-mini',
+      model: 'gemini-2.5-flash',
       temperature: 0.5,
-      maxTokens: 2000,
+      maxOutputTokens: 2000,
     },
     finalEvaluator: {
       name: 'FinalEvaluator',
-      model: 'gpt-4o-mini',
+      model: 'gemini-2.5-flash',
       temperature: 0.4,
-      maxTokens: 2500,
+      maxOutputTokens: 2500,
     },
   },
 };
@@ -61,8 +61,8 @@ export const config = {
  * Validate configuration
  */
 export const validateConfig = () => {
-  if (!config.openaiApiKey) {
-    throw new Error('OPENAI_API_KEY is required in environment variables');
+  if (!config.geminiApiKey) {
+    throw new Error('GEMINI_API_KEY is required in environment variables');
   }
   
   console.log('✅ Agent configuration validated successfully');

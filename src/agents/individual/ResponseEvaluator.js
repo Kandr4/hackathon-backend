@@ -5,18 +5,15 @@ import config from '../config/index.js';
  * Model 5: Response Evaluator
  * Creates rubrics and evaluates Model 4's teaching responses
  * Only responses scoring above 70 are sent to the frontend
- * Uses o1 (GPT-thinking high) for rigorous evaluation
+ * Uses Gemini 1.5 Pro for rigorous evaluation
  */
 export class ResponseEvaluator extends BaseAgent {
   constructor() {
     super({
       name: 'ResponseEvaluator',
-      model: 'gpt-5-thinking',
-      reasoning: {
-        "effort": "high"
-      }, // Using o1 for deep, rigorous evaluation
-      temperature: 1, // o1 models don't support temperature
-      maxTokens: 12000, // o1 supports larger context for detailed evaluation
+      model: 'gemini-2.5-flash',
+      temperature: 0.3,
+      maxOutputTokens: 8192,
       systemPrompt: 'You are an expert educational content evaluator who creates rubrics and scores teaching responses.',
     });
     
